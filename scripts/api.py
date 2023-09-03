@@ -95,7 +95,7 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
 
     # Download Model From Civitai
     @app.post("/civitai/download/")
-    async def civitai_download(id:int,subfolder:str="/",version:int=0):
+    async def civitai_download(id:int,subfolder:str="/",version:int=0,image:int=0):
 
 
             
@@ -171,16 +171,29 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
                     sys.stdout.write("\r[%s%s] %d%%" % ('-' * progress, ' ' * (50 - progress), 100 * downloaded_size / total_size))
                     sys.stdout.flush()
 
-        print()
+        print("")
 
         # rename file
         os.rename(dl_file_path, file_path)
         print(f"File Downloaded to: {file_path}")
         is_downloading = False
 
+        # Save the model info to a .civitai.info file
         info_path = file_path.replace(ext, ".civitai.info")
         with open(info_path, 'w') as f:
             f.write(json.dumps(model_info["modelVersions"][version], indent=4))
+
+        # Download image from imageUrl
+        image_path = file_path.replace(ext, ".preview.png")
+        image_url = model_info["modelVersions"][version]["images"][image]["url"]
+        image_r = requests.get(image_url, stream=True, verify=False, headers=def_headers, proxies=proxies)
+        with open(image_path, "wb") as f:
+            f.write(image_r.content)
+            
+
+
+
+
 
         refresh_installed_models()
         return {
@@ -284,8 +297,8 @@ def refresh_installed_models():
                         model_info["filename"] = filename
                         if model_info["modelId"]:
                             installed_models_list.append(model_info)
-                except Exception as e:
-                    print(e)
+                # except Exception as e:
+                #     print(e)
 
 refresh_installed_models()
 

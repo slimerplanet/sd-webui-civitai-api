@@ -1,5 +1,7 @@
+import asyncio
 import json
 import sys
+from addict import Dict
 import numpy as np
 from fastapi import FastAPI, Body
 from fastapi.exceptions import HTTPException
@@ -11,7 +13,7 @@ from enum import Enum
 
 from modules.api.models import *
 from modules.api import api
-
+from aiofiles import open as aio_open
 import os
 import requests
 
@@ -41,13 +43,13 @@ def getSubfolders(type):
     
     prefix_len = len(folder)
     subfolders = []
+    subfolders.append("/")
     for root, dirs, files in os.walk(folder, followlinks=True):
         for dir in dirs:
             full_dir_path = os.path.join(root, dir)
             # get subfolder path from it
             subfolder = full_dir_path[prefix_len:]
             subfolders.append(subfolder)
-    subfolders.append("/")
 
     return subfolders
     
@@ -85,12 +87,19 @@ class IdType(str, Enum):
     modelId = "modelId"
     VersionId = "id"
     
+# Create a list of all installed models beforehand
+installed_models_list = []
+is_downloading  = False
 
 def civitai_api(_: gr.Blocks, app: FastAPI):
 
     # Download Model From Civitai
     @app.post("/civitai/download/")
     async def civitai_download(id:int,subfolder:str="/",version:int=0):
+
+
+            
+
 
         model_info = get_model_info_by_id(id)
 
@@ -99,6 +108,8 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
             version = len(model_info["modelVersions"])-1
 
         version_id = model_info["modelVersions"][version]["id"]
+
+        print("Downloading Model: " + model_info["name"])    
 
         # Get the download url
         download_url = model_info["modelVersions"][version]["files"][0]["downloadUrl"]
@@ -165,11 +176,13 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
         # rename file
         os.rename(dl_file_path, file_path)
         print(f"File Downloaded to: {file_path}")
+        is_downloading = False
 
         info_path = file_path.replace(ext, ".civitai.info")
         with open(info_path, 'w') as f:
             f.write(json.dumps(model_info["modelVersions"][version], indent=4))
 
+        refresh_installed_models()
         return {
             "message": "downloaded",
             "path": file_path,
@@ -189,11 +202,15 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
         }
 
 
-    
+    @app.post("/civitai/refresh-installed")
+    async def refresh_installed():
+        refresh_installed_models()
+        return {
+            "message": "refreshed"
+        }
 
-    #check if model is already installed
     @app.get("/civitai/installed")
-    async def check_installed(id:int,id_type:IdType=IdType.modelId):
+    async def check_installed(id: int, id_type: IdType = IdType.modelId):
         model_info = get_model_info_by_id(id)
 
         if not model_info:
@@ -203,26 +220,74 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
 
         folder = folders[model_info["type"]]
 
-        #loop through all .civitai.info files in folder and its subfolders
-        for root, dirs, files in os.walk(folder, followlinks=True):
-            for filename in files:
+        async def search_in_files(root):
+            for filename in os.listdir(root):
                 if filename.endswith(".civitai.info"):
-                    with open(os.path.join(root, filename), 'r') as f:
-                        try:
-                            model_info = json.load(f)
+                    file_path = os.path.join(root, filename)
+                    try:
+                        async with aio_open(file_path, 'r') as f:
+                            content = await f.read()
+                            model_info = json.loads(content)
                             if model_info[id_type] == id:
                                 return {
                                     "installed": True,
-                                    "filename": filename.replace(".civitai.info","")
+                                    "filename": filename.replace(".civitai.info", "")
                                 }
-                        except Exception as e:
-                            print(e)
-                            return {
-                                "installed": False,
-                            }
+                    except Exception as e:
+                        print(e)
         
+        for root, dirs, files in os.walk(folder, followlinks=True):
+            result = await search_in_files(root)
+            if result:
+                return result
+        
+        return {
+            "installed": False,
+        }
+        
+    
+    @app.post("/civitai/installed-multiple")
+    async def check_installed_multiple(payload: Dict[str, List[int]]):
+        ids = payload.get("ids", [])
+        installed_models = {}
+
+        # Initialize the installed_models dictionary with all IDs
+        # for id in ids:
+        #     installed_models[str(id)] = {
+        #         "installed": False,
+        #     }
+
+        # Check each ID against the pre-created list of installed models
+        for id in ids:
+            for model_info in installed_models_list:
+                if model_info["modelId"]:
+                    if model_info["modelId"] == id:
+                        installed_models[str(id)] = {
+                            "installed": True,
+                            "filename": model_info["filename"].replace(".civitai.info", "")
+                        }
+                        break
+
+        return installed_models
 
 
+def refresh_installed_models():
+    installed_models_list.clear()
+    for root, dirs, files in os.walk(os.path.join(root_path, "models"), followlinks=True):
+        for filename in files:
+            if filename.endswith(".civitai.info"):
+                file_path = os.path.join(root, filename)
+                try:
+                    with open(file_path, 'r') as f:
+                        content = f.read()
+                        model_info = json.loads(content)
+                        model_info["filename"] = filename
+                        if model_info["modelId"]:
+                            installed_models_list.append(model_info)
+                except Exception as e:
+                    print(e)
+
+refresh_installed_models()
 
 try:
     import modules.script_callbacks as script_callbacks

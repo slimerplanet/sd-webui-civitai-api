@@ -199,7 +199,7 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
         return {
             "message": "downloaded",
             "path": file_path,
-            "filename": filename,
+            "filename": filename.replace(ext, ""),
         }
     
     #get all model subfolders

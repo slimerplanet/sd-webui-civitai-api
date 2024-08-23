@@ -260,7 +260,7 @@ def civitai_api(_: gr.Blocks, app: FastAPI):
         
     
     @app.post("/civitai/installed-multiple")
-    async def check_installed_multiple(payload: Dict[str, List[int]]):
+    async def check_installed_multiple(payload: Dict[str, list[int]]):
         ids = payload.get("ids", [])
         installed_models = {}
 
